@@ -231,10 +231,11 @@ class BaseLFW(object):
                 if download_if_missing:
                     logger.warn("Downloading LFW data (~200MB): %s => %s" %(
                             self.URL, archive_path))
-                    downloader = urllib.urlopen(self.URL)
-                    data = downloader.read()
+                    #downloader = urllib.urlopen(self.URL)
+                    #data = downloader.read()
                     # don't open file until download is complete
-                    open(archive_path, 'wb').write(data)
+                    #open(archive_path, 'wb').write(data)
+                    os.system('wget ' + self.URL + ' -O ' + archive_path)
                 else:
                     raise IOError("%s is missing" % target_filepath)
 
