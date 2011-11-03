@@ -293,7 +293,7 @@ class BaseLFW(object):
     # img_... methods return lazily-loaded image lists
     #
 
-    def raw_recognition_task(self):
+    def raw_classification_task(self):
         """Return image_paths, labels"""
         image_paths = [self.image_path(m) for m in self.meta]
         names = np.asarray([m['name'] for m in self.meta])
@@ -319,8 +319,8 @@ class BaseLFW(object):
                 np.asarray(right_image_paths),
                 np.asarray(labels, dtype='int'))
 
-    def img_recognition_task(self, dtype='uint8'):
-        img_paths, labels = self.raw_recognition_task()
+    def img_classification_task(self, dtype='uint8'):
+        img_paths, labels = self.raw_classification_task()
         imgs = larray.lmap(
                 utils.image.ImgLoader(shape=(250, 250, 3), dtype=dtype),
                 img_paths)
