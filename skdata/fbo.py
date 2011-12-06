@@ -27,7 +27,7 @@ from utils.image import ImgLoader
 
 class BaseFaceBodyObject(object):
 
-    def __init__(self, meta=None, seed=0, ntrain=15, ntest=15, num_splits=10):
+    def __init__(self, meta=None, seed=0, ntrain=10, ntest=10, num_splits=5):
 
         self.seed = seed
         self.ntrain = ntrain
