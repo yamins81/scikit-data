@@ -130,8 +130,14 @@ class BaseFaceBodyObject(object):
                                                 ntest, num_splits)
         return self._splits
 
-    def generate_splits(self, seed, ntrain, ntest, num_splits):
+    def generate_splits(self, seed, ntrain, ntest, num_splits, labelset=None, catfunc=None):
         meta = self.meta
+        if labelset is not None:
+            assert catfunc is not None
+        else:
+            labelset = self.names
+            catfunc = lambda x : x['name']
+
         ntrain = self.ntrain
         ntest = self.ntest
         rng = np.random.RandomState(seed)
@@ -139,15 +145,15 @@ class BaseFaceBodyObject(object):
         for split_id in range(num_splits):
             splits['train_' + str(split_id)] = []
             splits['test_' + str(split_id)] = []
-            for name in self.names:
-                cat = [m for m in meta if m['name'] == name]
+            for label in labelset:
+                cat = [m for m in meta if catfunc(m) == label]
                 L = len(cat)
                 assert L >= ntrain + ntest, 'category %s too small' % name
                 perm = rng.permutation(L)
                 for ind in perm[:ntrain]:
-                    splits['train_' + str(split_id)].append(cat[ind]['id'])
+                    splits['train_' + str(split_id)].append(cat[ind]['filename'])
                 for ind in perm[ntrain: ntrain + ntest]:
-                    splits['test_' + str(split_id)].append(cat[ind]['id'])
+                    splits['test_' + str(split_id)].append(cat[ind]['filename'])
         return splits
 
     # ------------------------------------------------------------------------
@@ -175,7 +181,7 @@ class BaseFaceBodyObject(object):
 
     def img_classification_task(self, dtype='uint8', split=None):
         img_paths, labels = self.raw_classification_task(split=split)
-        imgs = larray.lmap(ImgLoader(ndim=2, dtype=dtype, mode='L'),
+        imgs = larray.lmap(ImgLoader(ndim=2, shape=(400,400), dtype=dtype, mode='L'),
                            img_paths)
         return imgs, labels
 
