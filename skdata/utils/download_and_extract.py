@@ -2,11 +2,15 @@
 
 # Authors: Nicolas Pinto <pinto@rowland.harvard.edu>
 #          Nicolas Poilvert <poilvert@rowland.harvard.edu>
+#          Daniel Yamins <yamins@mit.edu>
 # License: BSD 3 clause
 
 from urllib2 import urlopen
 from os import path
 import hashlib
+import urlparse
+
+import boto
 
 import archive
 
@@ -52,6 +56,21 @@ def download(url, output_filename, sha1=None, verbose=True):
         output_file.write(page.read())
 
     output_file.close()
+
+    if sha1 is not None:
+        verify_sha1(output_filename, sha1)
+
+
+def download_boto(url, credentials, output_filename, sha1=None):
+    """Downloads file from S3 via boto at `url` and write it in `output_dirname`"""
+
+    conn = boto.connect_s3(*credentials)
+    url = urlparse.urlparse(url)
+    bucketname = url.netloc.split('.')[0]
+    file = url.path.strip('/')
+    bucket = conn.get_bucket(bucketname)
+    key = bucket.get_key(file)
+    key.get_contents_to_filename(output_filename)
 
     if sha1 is not None:
         verify_sha1(output_filename, sha1)
