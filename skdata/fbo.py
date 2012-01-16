@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """A very simple Face Body Object dataset.
 
-   Contains 60 grayscale images (20 each of monkey faces, monkey bodies, and various objects)
-   on mixed backgrounds.
+   Contains 60 grayscale images (20 each of monkey faces, monkey bodies, 
+   and various objects) on pink noise backgrounds.
 """
 
 # Copyright (C) 2011
