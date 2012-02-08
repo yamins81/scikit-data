@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 class InferenceError(Exception):
     """Information about a lazily-evaluated quantity could not be inferred"""
 
+class UnknownShape(InferenceError):
+    """Shape could not be inferred"""
+
 def is_int_idx(idx):
     #XXX: add numpy int types
     return isinstance(idx,
@@ -111,19 +114,21 @@ class lmap(larray):
         else:
             return len(self.objs[0])
 
-    def __get_shape(self):
+    @property
+    def shape(self):
         shape_0 = len(self)
-        shape_rest = self.fn.rval_getattr('shape', objs=self.objs)
-        return (shape_0,) + shape_rest
-    shape = property(__get_shape)
+        if hasattr(self.fn, 'rval_getattr'):
+            shape_rest = self.fn.rval_getattr('shape', objs=self.objs)
+            return (shape_0,) + shape_rest
+        raise UnknownShape() 
 
-    def __get_dtype(self):
+    @property
+    def dtype(self):
         return self.fn.rval_getattr('dtype', objs=self.objs)
-    dtype = property(__get_dtype)
 
-    def __get_ndim(self):
+    @property
+    def ndim(self):
         return 1 + self.fn.rval_getattr('ndim', objs=self.objs)
-    ndim = property(__get_ndim)
 
     def __getitem__(self, idx):
         if is_int_idx(idx):
@@ -155,6 +160,44 @@ class lmap(larray):
 
     def inputs(self):
         return list(self.objs)
+
+
+class RvalGetattr(object):
+    """
+    See `lmap_info`
+    """
+    def __init__(self, info):
+        self.info = info
+
+    def __call__(self, name, objs=None):
+        try:
+            return self.info[name]
+        except KeyError:
+            raise InferenceError(name)
+
+
+def lmap_info(**kwargs):
+    """Decorator for providing information for lmap
+
+    >>> @lmap_info(shape=(10, 20), dtype='float32')
+    >>> def foo(i):
+    >>>     return np.zeros((10, 20), dtype='float32') + i
+    >>>
+    """
+
+    # -- a little hack of convenience
+    if 'shape' in kwargs:
+        if 'ndim' in kwargs:
+            assert len(kwargs['shape']) == kwargs['ndim']
+        else:
+            kwargs['ndim'] = len(kwargs['shape'])
+
+    def wrapper(f):
+        f.rval_getattr = RvalGetattr(kwargs)
+        return f
+
+    return wrapper
+
 
 def lzip(*arrays):
     # XXX: make a version of this method that supports call_batch
