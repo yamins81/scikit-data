@@ -18,6 +18,7 @@ Please consult the publication for further information.
 #          Dan Yamins <yamins@mit.edu>
 #          James Bergstra <bergstra@rowland.harvard.edu>
 #          Nicolas Pinto <pinto@rowland.harvard.edu>
+#          Giovani Chiachia <chiachia@rowland.harvard.edu>
 
 # License: Simplified BSD
 
@@ -30,11 +31,15 @@ import shutil
 from glob import glob
 import hashlib
 
+import larray
 from data_home import get_data_home
-from utils import download, extract
+from utils import download, extract, int_labels
 import utils
 import utils.image
+from utils.image import ImgLoader
 
+from sklearn import cross_validation
+import numpy as np
 
 class PubFig83(object):
     """PubFig83 Face Dataset
@@ -79,7 +84,13 @@ class PubFig83(object):
                 'female', 'male', 'male', 'male', 'male', 'female', 'female',
                 'male', 'male', 'male']
 
-    def __init__(self, meta=None):
+    def __init__(self, meta=None, seed=42, ntrain=90, ntest=10, num_splits=10):
+
+        self.seed = seed
+        self.ntrain = ntrain
+        self.ntest = ntest
+        self.num_splits = num_splits
+
         if meta is not None:
             self._meta = meta
 
@@ -129,20 +140,18 @@ class PubFig83(object):
 
     @property
     def meta(self):
-        if hasattr(self, '_meta'):
-            return self._meta
-        else:
+        if not hasattr(self, '_meta'):
             self.fetch(download_if_missing=True)
             self._meta = self._get_meta()
-            return self._meta
+        return self._meta
 
     def _get_meta(self):
-        names = sorted(os.listdir(self.home('pubfig83')))
+        names2 = sorted(os.listdir(self.home('pubfig83')))
         genders = self._GENDERS
-        assert len(names) == len(genders)
+        assert len(names2) == len(genders)
         meta = []
         ind = 0
-        for gender, name in zip(genders, names):
+        for gender, name in zip(genders, names2):
             img_filenames = sorted(glob(self.home('pubfig83', name, '*.jpg')))
             for img_filename in img_filenames:
                 img_data = open(img_filename, 'rb').read()
@@ -150,7 +159,62 @@ class PubFig83(object):
                 meta.append(dict(gender=gender, name=name, id=ind,
                                  filename=img_filename, sha1=sha1))
                 ind += 1
+
         return meta
+
+    @property
+    def names(self):
+        if not hasattr(self, '_names'):
+            self._names = np.array([self.meta[ind]['name'] for ind in xrange(len(self.meta))])
+        return self._names
+
+    @property
+    def classification_splits(self):
+        """
+        generates splits and attaches them in the "splits" attribute
+
+        """
+        if not hasattr(self, '_classification_splits'):
+            seed = self.seed
+            ntrain = self.ntrain
+            ntest = self.ntest
+            num_splits = self.num_splits
+            self._classification_splits = self._generate_classification_splits(seed, ntrain,
+                                                                        ntest, num_splits)
+        return self._classification_splits
+
+    def _generate_classification_splits(self, seed, ntrain, ntest, num_splits):
+        meta = self.meta
+        ntrain = self.ntrain
+        ntest = self.ntest
+        rng = np.random.RandomState(seed)
+        classification_splits = {}
+        
+        splits = {}
+        for split_id in range(num_splits):
+            splits[split_id] = {}
+            splits[split_id]['train'] = []
+            splits[split_id]['test'] = []
+        
+        labels = np.unique(self.names)
+        for label in labels:
+            samples_to_consider = (self.names == label)
+            samples_to_consider = np.where(samples_to_consider)[0]
+            
+            L = len(samples_to_consider)
+            assert L >= ntrain + ntest, 'category %s too small' % label
+            
+            ss = cross_validation.ShuffleSplit(L, 
+                                               n_iterations=num_splits, 
+                                               test_fraction=(ntest/float(L))-1e-5, #ceil(.) in lib
+                                               train_fraction=(ntrain/float(L))+1e-5,
+                                               random_state=rng)
+            
+            for split_id, [train_index, test_index] in enumerate(ss):
+                splits[split_id]['train'] += samples_to_consider[train_index].tolist()
+                splits[split_id]['test'] += samples_to_consider[test_index].tolist()
+                
+        return splits
 
     # ------------------------------------------------------------------------
     # -- Dataset Interface: clean_up()
@@ -165,22 +229,43 @@ class PubFig83(object):
     # ------------------------------------------------------------------------
 
     def image_path(self, m):
-        return self.home('pubfig83', m['name'], m['jpgfile'])
+        return self.home('pubfig83', m['name'], m['filename'])
+        #return self.home('pubfig83', m['name'], m['jpgfile'])
 
     # ------------------------------------------------------------------------
     # -- Standard Tasks
     # ------------------------------------------------------------------------
 
-    def raw_recognition_task(self):
-        names = [m['name'] for m in self.meta]
-        paths = [self.image_path(m) for m in self.meta]
-        labels = utils.int_labels(names)
-        return paths, labels
+    def raw_classification_task(self, split=None, split_role=None):
+        """
+        :param split: an integer from 0 to 9 inclusive.
+        :param split_role: either 'train' or 'test'
+        
+        :returns: either all samples (when split_k=None) or the specific 
+                  train/test split
+        """
+
+        if split is not None:
+            assert split in range(10), ValueError(split)
+            assert split_role in ('train', 'test'), ValueError(split_role)                    
+            inds = self.classification_splits[split][split_role]
+        else:
+            inds = range(len(self.meta))            
+        names = self.names[inds]
+        paths = [self.meta[ind]['filename'] for ind in inds]
+        labels = int_labels(names)
+        return paths, labels, inds
 
     def raw_gender_task(self):
         genders = [m['gender'] for m in self.meta]
         paths = [self.image_path(m) for m in self.meta]
         return paths, utils.int_labels(genders)
+
+    def img_classification_task(self, dtype='uint8', split=None, split_role=None):
+        img_paths, labels, inds = self.raw_classification_task(split=split, split_role=split_role)
+        imgs = larray.lmap(ImgLoader(ndim=3, dtype=dtype, mode='RGB'),
+                           img_paths)
+        return imgs, labels
 
 
 # ------------------------------------------------------------------------
