@@ -461,6 +461,7 @@ class cache_memmap(CacheMixin, larray):
         If new files are created, then `msg` will be written to README.msg
         """
 
+        self.obj = obj
         if basedir is None:
             basedir = self.ROOT
         self.dirname = dirname = os.path.join(basedir, name)
@@ -469,9 +470,7 @@ class cache_memmap(CacheMixin, larray):
         data_path = os.path.join(dirname, 'data.raw')
         valid_path = os.path.join(dirname, 'valid.raw')
         header_path = os.path.join(dirname, 'header.pkl')
-        
-        self.obj = obj
-        
+
         try:
             dtype, shape = cPickle.load(open(header_path))
             if obj is None or (dtype == obj.dtype and shape == obj.shape):
