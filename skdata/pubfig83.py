@@ -236,7 +236,7 @@ class PubFig83(object):
 
     def img_classification_task(self, dtype='uint8', split=None):
         img_paths, labels, inds = self.raw_classification_task(split=split)
-        imgs = larray.lmap(ImgLoader(ndim=3, dtype=dtype, mode='RGB'),
+        imgs = larray.lmap(ImgLoader(shape=(100, 100, 3), dtype=dtype, mode='RGB'),
                            img_paths)
         return imgs, labels
 
