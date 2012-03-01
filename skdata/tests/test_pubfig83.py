@@ -16,20 +16,31 @@ def test_meta():
 
 
 def test_classification_splits():
+    """
+    Test that there are Test and Train/Validate splits
+    """
     dataset = pubfig83.PubFig83()
     splits = dataset.classification_splits
     assert set(splits.keys()) == set(SPLIT_NAMES)
+    #test split has 10 examples per category
     assert len(np.unique(splits['Test'])) == 830
     names = dataset.names
     assert (names[splits['Test']] == np.repeat(NAMES, 10)).all()
+    #there are 5 train/validate splits
     for ind in range(5):
+        #train split has 80 names per category
         assert len(np.unique(splits['Train%d' % ind])) == 80*83
+        #validate split has 10 names per category
         assert len(np.unique(splits['Validate%d' % ind])) == 10*83
         assert (names[splits['Train%d' % ind]] == np.repeat(NAMES, 80)).all()
         assert (names[splits['Validate%d' % ind]] == np.repeat(NAMES, 10)).all()
-        assert set(splits['Test']).intersection(splits['Train%d' % ind]) == set([])
-        assert set(splits['Test']).intersection(splits['Validate%d' % ind]) == set([])
-        assert set(splits['Train%d' % ind]).intersection(splits['Validate%d' % ind]) == set([])
+        #no intersections between test & train & validate)
+        assert set(splits['Test']).intersection(
+                                         splits['Train%d' % ind]) == set([])
+        assert set(splits['Test']).intersection(
+                                       splits['Validate%d' % ind]) == set([])
+        assert set(splits['Train%d' % ind]).intersection(
+                                    splits['Validate%d' % ind]) == set([])
 
 
 def test_classification_task():
@@ -42,7 +53,9 @@ def test_classification_task():
 def test_images():
     dataset = pubfig83.PubFig83()
     I, labels = dataset.img_classification_task()
+    #there are 13838 100x100 rgb images
     assert I.shape == (13838, 100, 100, 3)
+    #a random sampling of 100 having the right checksums
     rng = np.random.RandomState(0)
     inds = rng.randint(13838, size=(100,))
     assert [I[k].sum() for k in inds] == DATA_SUMS
