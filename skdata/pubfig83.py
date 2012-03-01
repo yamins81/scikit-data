@@ -84,24 +84,10 @@ class PubFig83(object):
                 'female', 'male', 'male', 'male', 'male', 'female', 'female',
                 'male', 'male', 'male']
 
-    def __init__(self, meta=None, seed=42, ntrain=90, ntest=10, num_splits=10):
-
-        self.seed = seed
-        self.ntrain = ntrain
-        self.ntest = ntest
-        self.num_splits = num_splits
-
+    def __init__(self, meta=None):
         if meta is not None:
             self._meta = meta
-
         self.name = self.__class__.__name__
-
-        try:
-            from joblib import Memory
-            mem = Memory(cachedir=self.home('cache'))
-            self._get_meta = mem.cache(self._get_meta)
-        except ImportError:
-            pass
 
     def home(self, *suffix_paths):
         return path.join(get_data_home(), self.name, *suffix_paths)
@@ -175,45 +161,34 @@ class PubFig83(object):
 
         """
         if not hasattr(self, '_classification_splits'):
-            seed = self.seed
-            ntrain = self.ntrain
-            ntest = self.ntest
-            num_splits = self.num_splits
-            self._classification_splits = self._generate_classification_splits(seed, ntrain,
-                                                                        ntest, num_splits)
+            self._classification_splits = self._generate_classification_splits()
         return self._classification_splits
 
-    def _generate_classification_splits(self, seed, ntrain, ntest, num_splits):
+    def _generate_classification_splits(self):
         meta = self.meta
-        ntrain = self.ntrain
-        ntest = self.ntest
-        rng = np.random.RandomState(seed)
+        rng = np.random.RandomState(0)
         classification_splits = {}
         
         splits = {}
-        for split_id in range(num_splits):
-            splits[split_id] = {}
-            splits[split_id]['train'] = []
-            splits[split_id]['test'] = []
-        
         labels = np.unique(self.names)
         for label in labels:
             samples_to_consider = (self.names == label)
             samples_to_consider = np.where(samples_to_consider)[0]
-            
-            L = len(samples_to_consider)
-            assert L >= ntrain + ntest, 'category %s too small' % label
-            
-            ss = cross_validation.ShuffleSplit(L, 
-                                               n_iterations=num_splits, 
-                                               test_fraction=(ntest/float(L))-1e-5, #ceil(.) in lib
-                                               train_fraction=(ntrain/float(L))+1e-5,
-                                               random_state=rng)
-            
-            for split_id, [train_index, test_index] in enumerate(ss):
-                splits[split_id]['train'] += samples_to_consider[train_index].tolist()
-                splits[split_id]['test'] += samples_to_consider[test_index].tolist()
-                
+            assert len(samples_to_consider) >= 100
+            p = rng.permutation(len(samples_to_consider))
+            if 'Test' not in splits:
+                splits['Test'] = []
+            splits['Test'].extend(samples_to_consider[p[:10]])
+            remainder = samples_to_consider[p[10:]]
+            for _ind in range(5):
+                p = rng.permutation(len(remainder))
+                if 'Train%d' % _ind not in splits:
+                    splits['Train%d' % _ind] = []
+                splits['Train%d' % _ind].extend(remainder[p[:80]].copy())
+                if 'Validate%d' % _ind not in splits:
+                    splits['Validate%d' % _ind] = []
+                splits['Validate%d' % _ind].extend(remainder[p[80:90]].copy())
+
         return splits
 
     # ------------------------------------------------------------------------
@@ -236,7 +211,7 @@ class PubFig83(object):
     # -- Standard Tasks
     # ------------------------------------------------------------------------
 
-    def raw_classification_task(self, split=None, split_role=None):
+    def raw_classification_task(self, split=None):
         """
         :param split: an integer from 0 to 9 inclusive.
         :param split_role: either 'train' or 'test'
@@ -245,10 +220,8 @@ class PubFig83(object):
                   train/test split
         """
 
-        if split is not None:
-            assert split in range(10), ValueError(split)
-            assert split_role in ('train', 'test'), ValueError(split_role)                    
-            inds = self.classification_splits[split][split_role]
+        if split is not None:                 
+            inds = self.classification_splits[split]
         else:
             inds = range(len(self.meta))            
         names = self.names[inds]
@@ -261,8 +234,8 @@ class PubFig83(object):
         paths = [self.image_path(m) for m in self.meta]
         return paths, utils.int_labels(genders)
 
-    def img_classification_task(self, dtype='uint8', split=None, split_role=None):
-        img_paths, labels, inds = self.raw_classification_task(split=split, split_role=split_role)
+    def img_classification_task(self, dtype='uint8', split=None):
+        img_paths, labels, inds = self.raw_classification_task(split=split)
         imgs = larray.lmap(ImgLoader(ndim=3, dtype=dtype, mode='RGB'),
                            img_paths)
         return imgs, labels
