@@ -16,24 +16,65 @@ def test_meta():
 
 
 def test_classification_splits():
+    classification_splits_base(nfolds=pubfig83.DEFAULT_NFOLDS,
+                               ntrain=pubfig83.DEFAULT_NTRAIN,
+                               ntest=pubfig83.DEFAULT_NTEST,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+
+    classification_splits_base(nfolds=2,
+                               ntrain=pubfig83.DEFAULT_NTRAIN,
+                               ntest=pubfig83.DEFAULT_NTEST,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+
+    classification_splits_base(nfolds=10,
+                               ntrain=pubfig83.DEFAULT_NTRAIN,
+                               ntest=pubfig83.DEFAULT_NTEST,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+
+    classification_splits_base(nfolds=pubfig83.DEFAULT_NFOLDS,
+                               ntrain=40,
+                               ntest=pubfig83.DEFAULT_NTEST,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+
+    classification_splits_base(nfolds=pubfig83.DEFAULT_NFOLDS,
+                               ntrain=40,
+                               ntest=20,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+
+    classification_splits_base(nfolds=pubfig83.DEFAULT_NFOLDS,
+                               ntrain=40,
+                               ntest=20,
+                               nvalidate=0)
+
+    try:
+        classification_splits_base(nfolds=pubfig83.DEFAULT_NFOLDS,
+                               ntrain=200,
+                               ntest=20,
+                               nvalidate=pubfig83.DEFAULT_NVALIDATE)
+    except pubfig83.NotEnoughExamplesError:
+        pass
+    else:
+        raise Exception('Should have raised exception')
+
+
+def classification_splits_base(nfolds, ntrain, nvalidate, ntest):
     """
     Test that there are Test and Train/Validate splits
     """
-    dataset = pubfig83.PubFig83()
+    dataset = pubfig83.PubFig83(ntrain=ntrain, nfolds=nfolds, ntest=ntest,
+                                nvalidate=nvalidate)
     splits = dataset.classification_splits
-    assert set(splits.keys()) == set(SPLIT_NAMES)
-    #test split has 10 examples per category
-    assert len(np.unique(splits['Test'])) == 830
+    assert set(splits.keys()) == set(correct_split_names(nfolds))
+    assert len(np.unique(splits['Test'])) == 83 * ntest
     names = dataset.names
-    assert (names[splits['Test']] == np.repeat(NAMES, 10)).all()
-    #there are 5 train/validate splits
-    for ind in range(5):
-        #train split has 80 names per category
-        assert len(np.unique(splits['Train%d' % ind])) == 80*83
-        #validate split has 10 names per category
-        assert len(np.unique(splits['Validate%d' % ind])) == 10*83
-        assert (names[splits['Train%d' % ind]] == np.repeat(NAMES, 80)).all()
-        assert (names[splits['Validate%d' % ind]] == np.repeat(NAMES, 10)).all()
+    assert (names[splits['Test']] == np.repeat(NAMES, ntest)).all()
+    for ind in range(nfolds):
+        assert len(np.unique(splits['Train%d' % ind])) == ntrain * 83
+        assert len(np.unique(splits['Validate%d' % ind])) == nvalidate * 83
+        assert (names[splits['Train%d' % ind]]
+                             == np.repeat(NAMES, ntrain)).all()
+        assert (names[splits['Validate%d' % ind]]
+                             == np.repeat(NAMES, nvalidate)).all()
         #no intersections between test & train & validate)
         assert set(splits['Test']).intersection(
                                          splits['Train%d' % ind]) == set([])
@@ -48,7 +89,7 @@ def test_classification_task():
     paths, labels, inds = dataset.raw_classification_task()
     assert (np.unique(labels) == range(83)).all()
     assert (labels == np.repeat(range(83), COUNTS)).all()
-    
+
 
 def test_images():
     dataset = pubfig83.PubFig83()
@@ -61,9 +102,12 @@ def test_images():
     assert [I[k].sum() for k in inds] == DATA_SUMS
 
 
-SPLIT_NAMES = ['Test', 'Train0', 'Validate0', 'Train1', 'Validate1', 
-               'Train2', 'Validate2', 'Train3', 'Validate3', 'Train4',
-               'Validate4']
+def correct_split_names(nfolds):
+    split_names = ['Test']
+    for ind in range(nfolds):
+        split_names.append('Train%d' % ind)
+        split_names.append('Validate%d' % ind)
+    return split_names
 
 
 DATA_SUMS = [3183920,
@@ -250,7 +294,7 @@ NAMES = ['Adam Sandler',
  'Viggo Mortensen',
  'Will Smith',
  'Zac Efron']
- 
+
 COUNTS = [108,
  103,
  214,

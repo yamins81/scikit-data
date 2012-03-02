@@ -41,6 +41,17 @@ from utils.image import ImgLoader
 from sklearn import cross_validation
 import numpy as np
 
+DEFAULT_NTRAIN = 80
+DEFAULT_NFOLDS = 5
+DEFAULT_NVALIDATE = 10
+DEFAULT_NTEST = 10
+
+
+class NotEnoughExamplesError(Exception):
+    def __init__(self, label, have, want):
+        self.msg = '%d wanted, but have only %d for %s' % (want, have, label)
+
+
 class PubFig83(object):
     """PubFig83 Face Dataset
 
@@ -84,10 +95,18 @@ class PubFig83(object):
                 'female', 'male', 'male', 'male', 'male', 'female', 'female',
                 'male', 'male', 'male']
 
-    def __init__(self, meta=None):
+    def __init__(self, meta=None,
+                 ntrain=DEFAULT_NTRAIN,
+                 nvalidate=DEFAULT_NVALIDATE,
+                 ntest=DEFAULT_NTEST,
+                 nfolds=DEFAULT_NFOLDS):
         if meta is not None:
             self._meta = meta
         self.name = self.__class__.__name__
+        self.ntrain = ntrain
+        self.nvalidate = nvalidate
+        self.ntest = ntest
+        self.nfolds = nfolds
 
     def home(self, *suffix_paths):
         return path.join(get_data_home(), self.name, *suffix_paths)
@@ -157,37 +176,44 @@ class PubFig83(object):
     @property
     def classification_splits(self):
         """
-        generates splits and attaches them in the "splits" attribute
-
         """
         if not hasattr(self, '_classification_splits'):
-            self._classification_splits = self._generate_classification_splits()
+            self._classification_splits = \
+                    self._generate_classification_splits(self.ntrain,
+                                                         self.nvalidate,
+                                                         self.ntest,
+                                                         self.nfolds)
+
         return self._classification_splits
 
-    def _generate_classification_splits(self):
+    def _generate_classification_splits(self, ntrain, nvalidate, ntest, nfolds):
         meta = self.meta
         rng = np.random.RandomState(0)
         classification_splits = {}
-        
+
         splits = {}
         labels = np.unique(self.names)
         for label in labels:
             samples_to_consider = (self.names == label)
             samples_to_consider = np.where(samples_to_consider)[0]
-            assert len(samples_to_consider) >= 100
+            if len(samples_to_consider) < ntrain + nvalidate + ntest:
+                raise NotEnoughExamplesError(label,
+                                             len(samples_to_consider),
+                                             ntrain + nvalidate + ntest)
             p = rng.permutation(len(samples_to_consider))
             if 'Test' not in splits:
                 splits['Test'] = []
-            splits['Test'].extend(samples_to_consider[p[:10]])
-            remainder = samples_to_consider[p[10:]]
-            for _ind in range(5):
+            splits['Test'].extend(samples_to_consider[p[: ntest]])
+            remainder = samples_to_consider[p[ntest:]]
+            for _ind in range(nfolds):
                 p = rng.permutation(len(remainder))
                 if 'Train%d' % _ind not in splits:
                     splits['Train%d' % _ind] = []
-                splits['Train%d' % _ind].extend(remainder[p[:80]].copy())
+                splits['Train%d' % _ind].extend(remainder[p[: ntrain]].copy())
                 if 'Validate%d' % _ind not in splits:
                     splits['Validate%d' % _ind] = []
-                splits['Validate%d' % _ind].extend(remainder[p[80:90]].copy())
+                splits['Validate%d' % _ind].extend(
+                              remainder[p[ntrain: ntrain + nvalidate]].copy())
 
         return splits
 
@@ -215,15 +241,15 @@ class PubFig83(object):
         """
         :param split: an integer from 0 to 9 inclusive.
         :param split_role: either 'train' or 'test'
-        
-        :returns: either all samples (when split_k=None) or the specific 
+
+        :returns: either all samples (when split_k=None) or the specific
                   train/test split
         """
 
-        if split is not None:                 
+        if split is not None:
             inds = self.classification_splits[split]
         else:
-            inds = range(len(self.meta))            
+            inds = range(len(self.meta))
         names = self.names[inds]
         paths = [self.meta[ind]['filename'] for ind in inds]
         labels = int_labels(names)
@@ -236,7 +262,9 @@ class PubFig83(object):
 
     def img_classification_task(self, dtype='uint8', split=None):
         img_paths, labels, inds = self.raw_classification_task(split=split)
-        imgs = larray.lmap(ImgLoader(shape=(100, 100, 3), dtype=dtype, mode='RGB'),
+        imgs = larray.lmap(ImgLoader(shape=(100, 100, 3),
+                                     dtype=dtype,
+                                     mode='RGB'),
                            img_paths)
         return imgs, labels
 
