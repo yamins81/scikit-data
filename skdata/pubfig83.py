@@ -204,7 +204,8 @@ class PubFig83(object):
             if 'Test' not in splits:
                 splits['Test'] = []
             splits['Test'].extend(samples_to_consider[p[: ntest]])
-            remainder = samples_to_consider[p[ntest:]]
+            remainder = samples_to_consider[p[ntest: ntest + ntrain + nvalidate]]
+            assert len(remainder) == ntrain + nvalidate
             for _ind in range(nfolds):
                 p = rng.permutation(len(remainder))
                 if 'Train%d' % _ind not in splits:

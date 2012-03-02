@@ -68,6 +68,7 @@ def classification_splits_base(nfolds, ntrain, nvalidate, ntest):
     assert len(np.unique(splits['Test'])) == 83 * ntest
     names = dataset.names
     assert (names[splits['Test']] == np.repeat(NAMES, ntest)).all()
+    all_ids = []
     for ind in range(nfolds):
         assert len(np.unique(splits['Train%d' % ind])) == ntrain * 83
         assert len(np.unique(splits['Validate%d' % ind])) == nvalidate * 83
@@ -82,6 +83,12 @@ def classification_splits_base(nfolds, ntrain, nvalidate, ntest):
                                        splits['Validate%d' % ind]) == set([])
         assert set(splits['Train%d' % ind]).intersection(
                                     splits['Validate%d' % ind]) == set([])
+        all_id = np.concatenate([splits['Train%d' % ind],
+                                 splits['Validate%d' % ind]])
+        all_id.sort()
+        all_ids.append(all_id)
+    if len(all_ids) > 1:
+        assert all([(all_ids[0] == a).all() for a in all_ids[1:]])
 
 
 def test_classification_task():
