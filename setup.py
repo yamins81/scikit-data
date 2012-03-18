@@ -1,84 +1,198 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-descr = """A collection of datasets available and associated tools"""
+""" distribute- and pip-enabled setup.py """
 
-import sys
+import logging
 import os
-import shutil
+import re
 
-DISTNAME = 'skdata'
-DESCRIPTION = ''
-LONG_DESCRIPTION = open('README.rst').read()
-MAINTAINER = 'James Bergstra'
-MAINTAINER_EMAIL = 'bergstra@rowland.harvard.edu'
-URL = ''
-LICENSE = 'new BSD'
-DOWNLOAD_URL = ''
-VERSION = '0.1'
+# ----- overrides -----
 
-import setuptools  # we are using a setuptools namespace
-from numpy.distutils.core import setup
+# set these to anything but None to override the automatic defaults
+packages = None
+package_name = None
+package_data = None
+scripts = None
+requirements_file = None
+requirements = None
+dependency_links = None
+
+# ---------------------
 
 
-if __name__ == "__main__":
+# ----- control flags -----
 
-    old_path = os.getcwd()
-    local_path = os.path.dirname(os.path.abspath(sys.argv[0]))
-    # python 3 compatibility stuff.
-    # Simplified version of scipy strategy: copy files into
-    # build/py3k, and patch them using lib2to3.
-    if sys.version_info[0] == 3:
-        try:
-            import lib2to3cache
-        except ImportError:
-            pass
-        local_path = os.path.join(local_path, 'build', 'py3k')
-        if os.path.exists(local_path):
-            shutil.rmtree(local_path)
-        print("Copying source tree into build/py3k for 2to3 transformation"
-              "...")
+# fallback to setuptools if distribute isn't found
+setup_tools_fallback = False
 
-        import lib2to3.main
-        from io import StringIO
-        print("Converting to Python3 via 2to3...")
-        _old_stdout = sys.stdout
-        try:
-            sys.stdout = StringIO()  # supress noisy output
-            res = lib2to3.main.main("lib2to3.fixes",
-                                    ['-x', 'import', '-w', local_path])
-        finally:
-            sys.stdout = _old_stdout
+# don't include subdir named 'tests' in package_data
+skip_tests = True
 
-        if res != 0:
-            raise Exception('2to3 failed, exiting ...')
+# print some extra debugging info
+debug = True
 
-    os.chdir(local_path)
-    sys.path.insert(0, local_path)
+# -------------------------
 
-    setup(name=DISTNAME,
-          maintainer=MAINTAINER,
-          packages=setuptools.find_packages(),
-          include_package_data=True,
-          maintainer_email=MAINTAINER_EMAIL,
-          description=DESCRIPTION,
-          license=LICENSE,
-          url=URL,
-          version=VERSION,
-          download_url=DOWNLOAD_URL,
-          long_description=LONG_DESCRIPTION,
-          zip_safe=True,  # the package can run out of an .egg file
-          install_requires=['numpy>=1.3.0'], # 'glumpy>=0.1.0'
-          classifiers=[
-              'Intended Audience :: Science/Research',
-              'Intended Audience :: Developers',
-              'License :: OSI Approved',
-              'Programming Language :: C',
-              'Programming Language :: Python',
-              'Topic :: Software Development',
-              'Topic :: Scientific/Engineering',
-              'Operating System :: Microsoft :: Windows',
-              'Operating System :: POSIX',
-              'Operating System :: Unix',
-              'Operating System :: MacOS'
-             ]
-    )
+if debug: logging.basicConfig(level=logging.DEBUG)
+# distribute import and testing
+try:
+    import distribute_setup
+    distribute_setup.use_setuptools()
+    logging.debug("distribute_setup.py imported and used")
+except ImportError:
+    # fallback to setuptools?
+    # distribute_setup.py was not in this directory
+    if not (setup_tools_fallback):
+        import setuptools
+        if not (hasattr(setuptools,'_distribute') and \
+                setuptools._distribute):
+            raise ImportError("distribute was not found and fallback to setuptools was not allowed")
+        else:
+            logging.debug("distribute_setup.py not found, defaulted to system distribute")
+    else:
+        logging.debug("distribute_setup.py not found, defaulting to system setuptools")
+
+import setuptools
+
+def find_scripts():
+    return [s for s in setuptools.findall('scripts/') if os.path.splitext(s)[1] != '.pyc']
+
+def package_to_path(package):
+    """
+    Convert a package (as found by setuptools.find_packages)
+    e.g. "foo.bar" to usable path
+    e.g. "foo/bar"
+
+    No idea if this works on windows
+    """
+    return package.replace('.','/')
+
+def find_subdirectories(package):
+    """
+    Get the subdirectories within a package
+    This will include resources (non-submodules) and submodules
+    """
+    try:
+        subdirectories = os.walk(package_to_path(package)).next()[1]
+    except StopIteration:
+        subdirectories = []
+    return subdirectories
+
+def subdir_findall(dir, subdir):
+    """
+    Find all files in a subdirectory and return paths relative to dir
+
+    This is similar to (and uses) setuptools.findall
+    However, the paths returned are in the form needed for package_data
+    """
+    strip_n = len(dir.split('/'))
+    path = '/'.join((dir, subdir))
+    return ['/'.join(s.split('/')[strip_n:]) for s in setuptools.findall(path)]
+
+def find_package_data(packages):
+    """
+    For a list of packages, find the package_data
+
+    This function scans the subdirectories of a package and considers all
+    non-submodule subdirectories as resources, including them in
+    the package_data
+
+    Returns a dictionary suitable for setup(package_data=<result>)
+    """
+    package_data = {}
+    for package in packages:
+        package_data[package] = []
+        for subdir in find_subdirectories(package):
+            if '.'.join((package, subdir)) in packages: # skip submodules
+                logging.debug("skipping submodule %s/%s" % (package, subdir))
+                continue
+            if skip_tests and (subdir == 'tests'): # skip tests
+                logging.debug("skipping tests %s/%s" % (package, subdir))
+                continue
+            package_data[package] += subdir_findall(package_to_path(package), subdir)
+    return package_data
+
+def parse_requirements(file_name):
+    """
+    from:
+        http://cburgmer.posterous.com/pip-requirementstxt-and-setuppy
+    """
+    requirements = []
+    with open(file_name, 'r') as f:
+        for line in f:
+            if re.match(r'(\s*#)|(\s*$)', line): continue
+            if re.match(r'\s*-e\s+', line):
+                requirements.append(re.sub(r'\s*-e\s+.*#egg=(.*)$',\
+                        r'\1', line).strip())
+            elif re.match(r'\s*-f\s+', line):
+                pass
+            else:
+                requirements.append(line.strip())
+    return requirements
+
+def parse_dependency_links(file_name):
+    """
+    from:
+        http://cburgmer.posterous.com/pip-requirementstxt-and-setuppy
+    """
+    dependency_links = []
+    with open(file_name) as f:
+        for line in f:
+            if re.match(r'\s*-[ef]\s+', line):
+                dependency_links.append(re.sub(r'\s*-[ef]\s+',\
+                        '', line))
+    return dependency_links
+
+# ----------- Override defaults here ----------------
+if packages is None: packages = setuptools.find_packages()
+
+if len(packages) == 0: raise Exception("No valid packages found")
+
+if package_name is None: package_name = packages[0]
+
+if package_data is None: package_data = find_package_data(packages)
+
+if scripts is None: scripts = find_scripts()
+
+if requirements_file is None:
+    requirements_file = 'requirements.txt'
+
+if os.path.exists(requirements_file):
+    if requirements is None:
+        requirements = parse_requirements(requirements_file)
+    if dependency_links is None:
+        dependency_links = parse_dependency_links(requirements_file)
+else:
+    if requirements is None:
+        requirements = []
+    if dependency_links is None:
+        dependency_links = []
+
+if debug:
+    logging.debug("Module name: %s" % package_name)
+    for package in packages:
+        logging.debug("Package: %s" % package)
+        logging.debug("\tData: %s" % str(package_data[package]))
+    logging.debug("Scripts:")
+    for script in scripts:
+        logging.debug("\tScript: %s" % script)
+    logging.debug("Requirements:")
+    for req in requirements:
+        logging.debug("\t%s" % req)
+    logging.debug("Dependency links:")
+    for dl in dependency_links:
+        logging.debug("\t%s" % dl)
+
+setuptools.setup(
+    name = package_name,
+    version = 'dev',
+    packages = packages,
+    scripts = scripts,
+    
+    package_data = package_data,
+    include_package_data = True,
+
+    install_requires = requirements,
+    dependency_links = dependency_links
+)
