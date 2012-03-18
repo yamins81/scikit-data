@@ -96,6 +96,7 @@ class lmap(larray):
     def __init__(self, fn, obj0, *objs, **kwargs):
         ragged = kwargs.pop('ragged', False)
         f_map = kwargs.pop('f_map', None)
+        verbose = kwargs.pop('verbose', False)
         if kwargs:
             raise TypeError('unrecognized kwarg', kwargs.keys())
 
@@ -103,6 +104,7 @@ class lmap(larray):
         self.objs = [obj0] + list(objs)
         self.ragged = ragged
         self.f_map = f_map
+        self.verbose = verbose
         if not ragged:
             for o in objs:
                 if len(obj0) != len(o):
@@ -134,18 +136,37 @@ class lmap(larray):
         if is_int_idx(idx):
             return self.fn(*[o[idx] for o in self.objs])
         else:
+            if self.verbose:
+                print ('Evaluating %d items' % len(idx))
+                
             try:
                 tmps = [o[idx] for o in self.objs]
             except TypeError:
                 # advanced indexing failed, try one element at a time
-                return [self.fn(*[o[i] for o in self.objs])
-                        for i in idx]
+                #return [self.fn(*[o[i] for o in self.objs])
+                #        for i in idx]
+                vals = []
+                for ind, i in enumerate(idx):
+                    if (ind / 100) * 100 == ind:
+                        print(ind, i)
+                    tmp = [o[i] for o in self.objs]
+                    vals.append(self.fn(*tmp))
+                return vals
 
             # we loaded our args by advanced indexing
             if self.f_map:
                 return self.f_map(*tmps)
             else:
-                return map(self.fn, *tmps)
+                if self.verbose:
+                    vals = []
+                    for ind, i in enumerate(idx):
+                        if (ind / 100) * 100 == ind:
+                            print(ind, i)
+                        tmp = [o[i] for o in self.objs]
+                        vals.append(self.fn(*tmp))
+                    return vals
+                else:
+                    return map(self.fn, *tmps)
 
     def __array__(self):
         #XXX: use self.batch_len to produce this more efficiently
