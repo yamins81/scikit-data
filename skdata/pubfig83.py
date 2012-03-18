@@ -18,6 +18,7 @@ Please consult the publication for further information.
 #          Dan Yamins <yamins@mit.edu>
 #          James Bergstra <bergstra@rowland.harvard.edu>
 #          Nicolas Pinto <pinto@rowland.harvard.edu>
+#          Giovani Chiachia <chiachia@rowland.harvard.edu>
 
 # License: Simplified BSD
 
@@ -30,10 +31,25 @@ import shutil
 from glob import glob
 import hashlib
 
+import larray
 from data_home import get_data_home
-from utils import download, extract
+from utils import download, extract, int_labels
 import utils
 import utils.image
+from utils.image import ImgLoader
+
+from sklearn import cross_validation
+import numpy as np
+
+DEFAULT_NTRAIN = 80
+DEFAULT_NFOLDS = 5
+DEFAULT_NVALIDATE = 10
+DEFAULT_NTEST = 10
+
+
+class NotEnoughExamplesError(Exception):
+    def __init__(self, label, have, want):
+        self.msg = '%d wanted, but have only %d for %s' % (want, have, label)
 
 
 class PubFig83(object):
@@ -79,18 +95,18 @@ class PubFig83(object):
                 'female', 'male', 'male', 'male', 'male', 'female', 'female',
                 'male', 'male', 'male']
 
-    def __init__(self, meta=None):
+    def __init__(self, meta=None,
+                 ntrain=DEFAULT_NTRAIN,
+                 nvalidate=DEFAULT_NVALIDATE,
+                 ntest=DEFAULT_NTEST,
+                 nfolds=DEFAULT_NFOLDS):
         if meta is not None:
             self._meta = meta
-
         self.name = self.__class__.__name__
-
-        try:
-            from joblib import Memory
-            mem = Memory(cachedir=self.home('cache'))
-            self._get_meta = mem.cache(self._get_meta)
-        except ImportError:
-            pass
+        self.ntrain = ntrain
+        self.nvalidate = nvalidate
+        self.ntest = ntest
+        self.nfolds = nfolds
 
     def home(self, *suffix_paths):
         return path.join(get_data_home(), self.name, *suffix_paths)
@@ -129,20 +145,18 @@ class PubFig83(object):
 
     @property
     def meta(self):
-        if hasattr(self, '_meta'):
-            return self._meta
-        else:
+        if not hasattr(self, '_meta'):
             self.fetch(download_if_missing=True)
             self._meta = self._get_meta()
-            return self._meta
+        return self._meta
 
     def _get_meta(self):
-        names = sorted(os.listdir(self.home('pubfig83')))
+        names2 = sorted(os.listdir(self.home('pubfig83')))
         genders = self._GENDERS
-        assert len(names) == len(genders)
+        assert len(names2) == len(genders)
         meta = []
         ind = 0
-        for gender, name in zip(genders, names):
+        for gender, name in zip(genders, names2):
             img_filenames = sorted(glob(self.home('pubfig83', name, '*.jpg')))
             for img_filename in img_filenames:
                 img_data = open(img_filename, 'rb').read()
@@ -150,7 +164,59 @@ class PubFig83(object):
                 meta.append(dict(gender=gender, name=name, id=ind,
                                  filename=img_filename, sha1=sha1))
                 ind += 1
+
         return meta
+
+    @property
+    def names(self):
+        if not hasattr(self, '_names'):
+            self._names = np.array([self.meta[ind]['name'] for ind in xrange(len(self.meta))])
+        return self._names
+
+    @property
+    def classification_splits(self):
+        """
+        """
+        if not hasattr(self, '_classification_splits'):
+            self._classification_splits = \
+                    self._generate_classification_splits(self.ntrain,
+                                                         self.nvalidate,
+                                                         self.ntest,
+                                                         self.nfolds)
+
+        return self._classification_splits
+
+    def _generate_classification_splits(self, ntrain, nvalidate, ntest, nfolds):
+        meta = self.meta
+        rng = np.random.RandomState(0)
+        classification_splits = {}
+
+        splits = {}
+        labels = np.unique(self.names)
+        for label in labels:
+            samples_to_consider = (self.names == label)
+            samples_to_consider = np.where(samples_to_consider)[0]
+            if len(samples_to_consider) < ntrain + nvalidate + ntest:
+                raise NotEnoughExamplesError(label,
+                                             len(samples_to_consider),
+                                             ntrain + nvalidate + ntest)
+            p = rng.permutation(len(samples_to_consider))
+            if 'Test' not in splits:
+                splits['Test'] = []
+            splits['Test'].extend(samples_to_consider[p[: ntest]])
+            remainder = samples_to_consider[p[ntest: ntest + ntrain + nvalidate]]
+            assert len(remainder) == ntrain + nvalidate
+            for _ind in range(nfolds):
+                p = rng.permutation(len(remainder))
+                if 'Train%d' % _ind not in splits:
+                    splits['Train%d' % _ind] = []
+                splits['Train%d' % _ind].extend(remainder[p[: ntrain]].copy())
+                if 'Validate%d' % _ind not in splits:
+                    splits['Validate%d' % _ind] = []
+                splits['Validate%d' % _ind].extend(
+                              remainder[p[ntrain: ntrain + nvalidate]].copy())
+
+        return splits
 
     # ------------------------------------------------------------------------
     # -- Dataset Interface: clean_up()
@@ -165,22 +231,43 @@ class PubFig83(object):
     # ------------------------------------------------------------------------
 
     def image_path(self, m):
-        return self.home('pubfig83', m['name'], m['jpgfile'])
+        return self.home('pubfig83', m['name'], m['filename'])
+        #return self.home('pubfig83', m['name'], m['jpgfile'])
 
     # ------------------------------------------------------------------------
     # -- Standard Tasks
     # ------------------------------------------------------------------------
 
-    def raw_recognition_task(self):
-        names = [m['name'] for m in self.meta]
-        paths = [self.image_path(m) for m in self.meta]
-        labels = utils.int_labels(names)
-        return paths, labels
+    def raw_classification_task(self, split=None):
+        """
+        :param split: an integer from 0 to 9 inclusive.
+        :param split_role: either 'train' or 'test'
+
+        :returns: either all samples (when split_k=None) or the specific
+                  train/test split
+        """
+
+        if split is not None:
+            inds = self.classification_splits[split]
+        else:
+            inds = range(len(self.meta))
+        names = self.names[inds]
+        paths = [self.meta[ind]['filename'] for ind in inds]
+        labels = int_labels(names)
+        return paths, labels, inds
 
     def raw_gender_task(self):
         genders = [m['gender'] for m in self.meta]
         paths = [self.image_path(m) for m in self.meta]
         return paths, utils.int_labels(genders)
+
+    def img_classification_task(self, dtype='uint8', split=None):
+        img_paths, labels, inds = self.raw_classification_task(split=split)
+        imgs = larray.lmap(ImgLoader(shape=(100, 100, 3),
+                                     dtype=dtype,
+                                     mode='RGB'),
+                           img_paths)
+        return imgs, labels
 
 
 # ------------------------------------------------------------------------
