@@ -137,8 +137,11 @@ class lmap(larray):
             return self.fn(*[o[idx] for o in self.objs])
         else:
             if self.verbose:
-                print ('Evaluating %d items' % len(idx))
-                
+                if isinstance(idx, slice):
+                    print ('Evaluating items from a slice.')                
+                else:
+                    num_items = len(idx)
+                    print ('Evaluating %d items' % num_items)           
             try:
                 tmps = [o[idx] for o in self.objs]
             except TypeError:
@@ -420,8 +423,9 @@ class CacheMixin(object):
         return [self.obj]
 
     def __getitem__(self, item):
+        test = self.test
         if isinstance(item, (int, np.int)):
-            if self._valid[item]:
+            if self._valid[item] or (test is not None and item > test):
                 return self._data[item]
             else:
                 obj_item = self.obj[item]
@@ -430,6 +434,11 @@ class CacheMixin(object):
                 self.rows_computed += 1
                 return self._data[item]
         else:
+            if test is not None:
+                if hasattr(item, '__getitem__'):
+                    item = item[:test]
+                else:
+                    return self._data[item]
             # could be a slice, an intlist, a tuple
             v = self._valid[item]
             assert v.ndim == 1
@@ -477,11 +486,12 @@ class cache_memmap(CacheMixin, larray):
 
     ROOT = os.path.join(get_data_home(), 'memmaps')
 
-    def __init__(self, obj, name, basedir=None, msg=None):
+    def __init__(self, obj, name, basedir=None, msg=None, test=None):
         """
         If new files are created, then `msg` will be written to README.msg
         """
 
+        self.test = test
         self.obj = obj
         if basedir is None:
             basedir = self.ROOT
