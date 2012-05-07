@@ -33,7 +33,7 @@ import hashlib
 
 import larray
 from data_home import get_data_home
-from utils import download, extract, int_labels
+from utils import download, extract, int_labels, download_and_extract
 import utils
 import utils.image
 from utils.image import ImgLoader
@@ -128,16 +128,13 @@ class PubFig83(object):
         sha1 = self.SHA1
         basename = path.basename(url)
         archive_filename = path.join(home, basename)
-        if not path.exists(archive_filename):
+        if not path.exists(self.home('pubfig83')):
             if not download_if_missing:
                 return
             if not path.exists(home):
                 os.makedirs(home)
-            download(url, archive_filename, sha1=sha1)
+            download_and_extract(url, archive_filename, sha1=sha1, verbose=True)
 
-        # extract it
-        if not path.exists(self.home('pubfig83')):
-            extract(archive_filename, home, sha1=sha1, verbose=True)
 
     # ------------------------------------------------------------------------
     # -- Dataset Interface: meta
@@ -217,7 +214,47 @@ class PubFig83(object):
                               remainder[p[ntrain: ntrain + nvalidate]].copy())
 
         return splits
-
+        
+        
+    def view2_classification_splits(self, ntrain_view2_additional, ntest_view2, nfolds_view2):
+        """
+        """
+        ntrain_screen = self.ntrain
+        nvalidate_screen = self.nvalidate
+        ntest_screen = self.ntest
+        nfolds_screen = self.nfolds
+        rng = np.random.RandomState(0)
+        
+        splits = self.classification_splits
+        all_train = sorted(splits['Train0'] + splits['Validate0'])
+        test = splits['Test']
+        
+        assert ntrain_view2_additional + ntest_view2 <= len(test)
+        
+        view2_splits = {}
+        meta = self.meta
+        labels = np.unique(self.names)
+        for name in labels:
+            samples_to_consider = sorted(list(set((self.names == name).nonzero()[0]).intersection(test)))
+            p = rng.permutation(len(samples_to_consider))
+            samples_to_consider = samples_to_consider[:ntrain_view2_additional + ntest_view2]
+            for _ind in range(nfolds_view2):
+                p = rng.permutation(len(samples_to_consider))
+                train_set = samples_to_consider[:ntrain_view2_additional]
+                test_set = samples_to_consider[ntrain_view2_additional: ntrain_view2_additional + ntest_view2]
+                if 'Train%d' % _ind not in view2_splits:
+                    view2_splits['Train%d' % _ind] = []
+                view2_splits['Train%d' % _ind].extend(train_set)
+                if 'Validate%d' % _ind not in view2_splits:
+                    view2_splits['Validate%d' % _ind] = []                
+                view2_splits['Validate%d' % _ind].extend(test_set)
+        
+        for _ind in range(nfolds):
+            view2_splits['Train%d' % _ind].extend(all_train)
+        
+        return view2_splits
+ 
+ 
     # ------------------------------------------------------------------------
     # -- Dataset Interface: clean_up()
     # ------------------------------------------------------------------------
