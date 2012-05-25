@@ -4,7 +4,7 @@
 """ distribute- and pip-enabled setup.py """
 
 import logging
-import os
+import osa
 import re
 
 # ----- overrides -----
@@ -196,3 +196,4 @@ setuptools.setup(
     install_requires = requirements,
     dependency_links = dependency_links
 )
+
