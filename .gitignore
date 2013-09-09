@@ -5,3 +5,5 @@
 *.tgz
 *.egg-info
 *.DS_Store
+build/
+

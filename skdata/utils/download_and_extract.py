@@ -18,11 +18,17 @@ import archive
 def verify_sha1(filename, sha1):
     data = open(filename, 'rb').read()
     if sha1 != hashlib.sha1(data).hexdigest():
-        raise IOError("File '%s': invalid SHA-1 hash! You may want to delete"
+        raise IOError("File '%s': invalid SHA-1 hash! You may want to delete "
+                      "this corrupted file..." % filename)
+
+def verify_md5(filename, md5):
+    data = open(filename, 'rb').read()
+    if md5 != hashlib.md5(data).hexdigest():
+        raise IOError("File '%s': invalid md5 hash! You may want to delete "
                       "this corrupted file..." % filename)
 
 
-def download(url, output_filename, sha1=None, verbose=True):
+def download(url, output_filename, sha1=None, verbose=True, md5=None):
     """Downloads file at `url` and write it in `output_dirname`"""
 
     page = urlopen(url)
@@ -59,6 +65,9 @@ def download(url, output_filename, sha1=None, verbose=True):
 
     if sha1 is not None:
         verify_sha1(output_filename, sha1)
+
+    if md5 is not None:
+        verify_md5(output_filename, md5)
 
 
 def download_boto(url, credentials, output_filename, sha1=None):

@@ -1,6 +1,7 @@
 """
 LazyArray
 """
+import atexit
 import cPickle
 import logging
 import os
@@ -16,13 +17,13 @@ logger = logging.getLogger(__name__)
 class InferenceError(Exception):
     """Information about a lazily-evaluated quantity could not be inferred"""
 
+
 class UnknownShape(InferenceError):
     """Shape could not be inferred"""
 
+
 def is_int_idx(idx):
-    #XXX: add numpy int types
-    return isinstance(idx,
-            (int,))
+    return isinstance(idx, (int, np.integer))
 
 
 def is_larray(thing):
@@ -85,18 +86,26 @@ class lmap(larray):
     fn can be a normal lambda expression, but it can also respond to the
     following attributes:
 
-    - call_batch
-
     - rval_getattr
         `fn.rval_getattr(name)` if it returns, must return the same thing as
         `getattr(fn(*args), name)` would return.
     """
-    #TODO: add kwarg to specify f_map implementation
-    #      that is drop-in for map(f, *args)
     def __init__(self, fn, obj0, *objs, **kwargs):
+        """
+        ragged - optional kwargs, defaults to False. Iff true, objs of
+            different lengths are allowed.
+
+        f_map - optional kwargs: defaults to None. If provided, it is used
+            to process input sub-sequences in one call.
+            `f_map(*args)` should return the same(*) thing as `map(fn, *args)`,
+            but the idea is that it would be faster.
+            (*) returning an ndarray instead of a list is allowed.
+        """
         ragged = kwargs.pop('ragged', False)
         f_map = kwargs.pop('f_map', None)
         verbose = kwargs.pop('verbose', False)
+        if f_map is None:
+            f_map = getattr(fn, 'f_map', None)
         if kwargs:
             raise TypeError('unrecognized kwarg', kwargs.keys())
 
@@ -122,7 +131,7 @@ class lmap(larray):
         if hasattr(self.fn, 'rval_getattr'):
             shape_rest = self.fn.rval_getattr('shape', objs=self.objs)
             return (shape_0,) + shape_rest
-        raise UnknownShape() 
+        raise UnknownShape()
 
     @property
     def dtype(self):
@@ -145,18 +154,11 @@ class lmap(larray):
             try:
                 tmps = [o[idx] for o in self.objs]
             except TypeError:
-                # advanced indexing failed, try one element at a time
-                #return [self.fn(*[o[i] for o in self.objs])
-                #        for i in idx]
-                vals = []
-                for ind, i in enumerate(idx):
-                    if (ind / 100) * 100 == ind:
-                        print(ind, i)
-                    tmp = [o[i] for o in self.objs]
-                    vals.append(self.fn(*tmp))
-                return vals
-
-            # we loaded our args by advanced indexing
+                # this can happen if idx is for numpy advanced indexing
+                # and `o` isn't an ndarray.
+                # try one element at a time
+                tmps = [[o[i] for i in idx] for o in self.objs]
+            # we loaded the subsequence of args
             if self.f_map:
                 return self.f_map(*tmps)
             else:
@@ -172,15 +174,18 @@ class lmap(larray):
                     return map(self.fn, *tmps)
 
     def __array__(self):
-        #XXX: use self.batch_len to produce this more efficiently
-        return np.asarray([self.fn(*[o[i] for o in self.objs])
-                for i in xrange(len(self))])
+        return np.asarray(self[:])
 
     def __print__(self):
-        return 'lmap(%s, ...)' % (self.fn.__name__,)
+        if hasattr(self.fn, '__name__'):
+            return 'lmap(%s, ...)' % self.fn.__name__
+        else:
+            return 'lmap(%s, ...)' % str(self.fn)
 
     def clone(self, given):
-        return lmap(self.fn, *[given_get(given, obj) for obj in self.objs])
+        return lmap(self.fn, *[given_get(given, obj) for obj in self.objs],
+                ragged=self.ragged,
+                f_map=self.f_map)
 
     def inputs(self):
         return list(self.objs)
@@ -285,12 +290,16 @@ class loop(larray):
 
 
 class reindex(larray):
+    """
+    Lazily re-index list-like `obj` so that
+    `self[i]` means `obj[imap[i]]`
+    """
     def __init__(self, obj, imap):
         self.obj = obj
         self.imap = np.asarray(imap)
         if 'int' not in str(self.imap.dtype):
             #XXX: diagnostic info
-            raise TypeError()
+            raise TypeError(imap.dtype)
 
     def __len__(self):
         return len(self.imap)
@@ -400,31 +409,41 @@ class CacheMixin(object):
         if batchsize <= 0:
             raise ValueError('non-positive batch size')
         if batchsize == 1:
-            for i in xrange(self.shape[0]):
+            for i in xrange(len(self)):
                 self[i]
         else:
-            while i < self.shape[0]:
+            i = 0
+            while i < len(self):
                 self[i:i + batchsize]
                 i += batchsize
 
     @property
     def shape(self):
-        return self.obj.shape
+        try:
+            return self._obj_shape
+        except:
+            return self.obj.shape
 
     @property
     def dtype(self):
-        return self.obj.dtype
+        try:
+            return self._obj_dtype
+        except:
+            return self.obj.dtype
 
     @property
     def ndim(self):
-        return self.obj.ndim
+        try:
+            return self._obj_ndim
+        except:
+            return self.obj.ndim
 
     def inputs(self):
         return [self.obj]
 
     def __getitem__(self, item):
         test = self.test
-        if isinstance(item, (int, np.int)):
+        if isinstance(item, (int, np.integer)):
             if self._valid[item] or (test is not None and item > test):
                 return self._data[item]
             else:
@@ -444,13 +463,56 @@ class CacheMixin(object):
             assert v.ndim == 1
             if np.all(v):
                 return self._data[item]
-            # otherwise at least some of the requested elements must be
-            # computed
-            # XXX: this brute-force recomputes all of the requested elements
+
+            # -- Quick and dirty, yes.
+            # -- Accurate, ?
+            try:
+                list(item)
+                is_int_list = True
+            except:
+                is_int_list = False
+
+            if np.sum(v) == 0:
+                # -- we need to re-compute everything in item
+                sub_item = item
+            elif is_int_list:
+                # -- in this case advanced indexing has been used
+                #    and only some of the elements need to be recomputed
+                assert self._valid.max() <= 1
+                item = np.asarray(item)
+                assert 'int' in str(item.dtype)
+                sub_item = item[v == 0]
+            elif isinstance(item, slice):
+                # -- in this case slice indexing has been used
+                #    and only some of the elements need to be recomputed
+                #    so we are converting the slice to an int_list
+                idxs_of_v = np.arange(len(self._valid))[item]
+                sub_item = idxs_of_v[v == 0]
+            else:
+                sub_item = item
+
             self.rows_computed += v.sum()
-            values = self.obj[item]
-            self._valid[item] = 1
-            self._data[item] = values
+            sub_values = self.obj[sub_item]  # -- retrieve missing elements
+            self._valid[sub_item] = 1
+            try:
+                self._data[sub_item] = sub_values
+            except:
+                logger.error('data dtype %s' % str(self._data.dtype))
+                logger.error('data shape %s' % str(self._data.shape))
+
+                logger.error('sub_item str %s' % str(sub_item))
+                logger.error('sub_item type %s' % type(sub_item))
+                logger.error('sub_item len %s' % len(sub_item))
+                logger.error('sub_item shape %s' % getattr(sub_item, 'shape',
+                    None))
+
+                logger.error('sub_values str %s' % str(sub_values))
+                logger.error('sub_values type %s' % type(sub_values))
+                logger.error('sub_values len %s' % len(sub_values))
+                logger.error('sub_values shape %s' % getattr(sub_values, 'shape',
+                    None))
+                raise
+            assert np.all(self._valid[item])
             return self._data[item]
 
 
@@ -472,7 +534,7 @@ class cache_memory(CacheMixin, larray):
     def clone(self, given):
         return self.__class__(obj=given_get(given, self.obj))
 
-    
+
 class cache_memmap(CacheMixin, larray):
     """
     Provide a lazily-filled cache of a larray (obj) via a memmap file
@@ -486,7 +548,8 @@ class cache_memmap(CacheMixin, larray):
 
     ROOT = os.path.join(get_data_home(), 'memmaps')
 
-    def __init__(self, obj, name, basedir=None, msg=None, test=None):
+
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False):
         """
         If new files are created, then `msg` will be written to README.msg
         """
@@ -506,16 +569,30 @@ class cache_memmap(CacheMixin, larray):
             dtype, shape = cPickle.load(open(header_path))
             if obj is None or (dtype == obj.dtype and shape == obj.shape):
                 mode = 'r+'
+                logger.info('Re-using memmap %s with dtype %s, shape %s' % (
+                        data_path,
+                        str(dtype),
+                        str(shape)))
+                self._obj_shape = shape
+                self._obj_dtype = dtype
+                self._obj_ndim = len(shape)
             else:
                 mode = 'w+'
+                logger.warn("Problem re-using memmap: dtype/shape mismatch")
+                logger.info('Creating memmap %s with dtype %s, shape %s' % (
+                        data_path,
+                        str(obj.dtype),
+                        str(obj.shape)))
+                dtype = obj.dtype
+                shape = obj.shape
         except IOError:
             dtype = obj.dtype
             shape = obj.shape
             mode = 'w+'
-
-        logger.info('Creating memmap %s for features of shape %s' % (
-                data_path,
-                str(shape)))
+            logger.info('Creating memmap %s with dtype %s, shape %s' % (
+                    data_path,
+                    str(dtype),
+                    str(obj.shape)))
 
         self._data = np.memmap(data_path,
             dtype=dtype,
@@ -545,13 +622,15 @@ class cache_memmap(CacheMixin, larray):
 
         self.rows_computed = 0
 
+        if del_atexit:
+            atexit.register(self.delete_files)
+
     def delete_files(self):
+        logger.info('deleting cache_memmap at %s' % self.dirname)
         subprocess.call(['rm', '-Rf', self.dirname])
 
     def clone(self, given):
         raise NotImplementedError()
-        return self.__class__(
-            obj=given_get(given, self.obj),
-            dirname=self.dirname + '_clone')
-    # XXX: What if you clone more than once? This implementation would
-    #      cause interference
+        # XXX: careful to ensure that any instance can be cloned multiple
+        # times, and the clones can themselves be cloned recursively.
+
