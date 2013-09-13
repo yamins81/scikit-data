@@ -1,8 +1,10 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-descr = """A collection of datasets available and associated tools"""
+""" distribute- and pip-enabled setup.py """
 
 import sys
+import logging
 import os
 import shutil
 import glob
