@@ -3,6 +3,8 @@
 
 """ distribute- and pip-enabled setup.py """
 
+
+import sys
 import logging
 import os
 import shutil
