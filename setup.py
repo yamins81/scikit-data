@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import glob
+import sys
 
 DISTNAME = 'skdata'
 DESCRIPTION = 'Data Sets for Machine Learning in Python'
