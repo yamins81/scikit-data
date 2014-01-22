@@ -549,7 +549,7 @@ class cache_memmap(CacheMixin, larray):
     ROOT = os.path.join(get_data_home(), 'memmaps')
 
 
-    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False):
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test=None):
         """
         If new files are created, then `msg` will be written to README.msg
         """
