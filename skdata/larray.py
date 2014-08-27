@@ -549,7 +549,8 @@ class cache_memmap(CacheMixin, larray):
     ROOT = os.path.join(get_data_home(), 'memmaps')
 
 
-    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test=None):
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test = None):
+
         """
         If new files are created, then `msg` will be written to README.msg
         """
@@ -698,7 +699,15 @@ class CacheMixinT(CacheMixin):
 
             self.rows_computed += v.sum()
             sub_values = self.obj[sub_item]  # -- retrieve missing elements
+            _n = sub_values.ndim
+            if _n == 1:
+                sub_values = sub_values.reshape((1, ) + sub_values.shape)
+            _n = sub_values.ndim
+            for _i in range(_n-1):
+                sub_values = sub_values.swapaxes(_i, _i+1)
+
             self._valid[sub_item] = 1
+
             try:
                 self._data[..., sub_item] = sub_values
             except:
@@ -756,7 +765,7 @@ class cache_memmap_T(CacheMixinT, larray):
     ROOT = os.path.join(get_data_home(), 'memmaps')
 
 
-    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False):
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test=None):
         """
         If new files are created, then `msg` will be written to README.msg
         """
@@ -813,7 +822,7 @@ class cache_memmap_T(CacheMixinT, larray):
         self._valid = np.memmap(valid_path,
             dtype='int8',
             mode=mode,
-            shape=(shape[0],))
+            shape=(shape[-1],))
 
         if mode == 'w+':
             # initialize a new set of files
