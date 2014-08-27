@@ -52,6 +52,8 @@ if __name__ == "__main__":
             shutil.rmtree(local_path)
         print("Copying source tree into build/py3k for 2to3 transformation"
               "...")
+        shutil.copytree(os.curdir, local_path,
+                        ignore=shutil.ignore_patterns('build', '.git'))
 
         import lib2to3.main
         from io import StringIO
@@ -74,6 +76,8 @@ if __name__ == "__main__":
           maintainer=MAINTAINER,
           packages=setuptools.find_packages(),
           include_package_data=True,
+          package_data={'skdata': ['data/*', 'descr/*', 'images/*.jpg',
+                                   'iris/*.csv', 'tests/*.xml']},
           maintainer_email=MAINTAINER_EMAIL,
           description=DESCRIPTION,
           license=LICENSE,
