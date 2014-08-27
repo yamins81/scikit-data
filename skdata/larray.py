@@ -147,10 +147,10 @@ class lmap(larray):
         else:
             if self.verbose:
                 if isinstance(idx, slice):
-                    print ('Evaluating items from a slice.')                
+                    print ('Evaluating items from a slice.')
                 else:
                     num_items = len(idx)
-                    print ('Evaluating %d items' % num_items)           
+                    print ('Evaluating %d items' % num_items)
             try:
                 tmps = [o[idx] for o in self.objs]
             except TypeError:
@@ -633,4 +633,208 @@ class cache_memmap(CacheMixin, larray):
         raise NotImplementedError()
         # XXX: careful to ensure that any instance can be cloned multiple
         # times, and the clones can themselves be cloned recursively.
+
+
+class CacheMixinT(CacheMixin):
+
+    @property
+    def shape(self):
+        try:
+            return self._obj_shape
+        except:
+            shp = self.obj.shape
+            shp = shp[1:] +  (shp[0], )
+            return shp
+
+    def __getitem__(self, item):
+        test = self.test
+        if isinstance(item, (int, np.integer)):
+            if self._valid[item] or (test is not None and item > test):
+                pass
+            else:
+                obj_item = self.obj[item]
+                self._data[..., item] = obj_item
+                self._valid[item] = 1
+                self.rows_computed += 1
+            return self._data[..., item]
+        else:
+            if test is not None:
+                if hasattr(item, '__getitem__'):
+                    item = item[:test]
+                else:
+                    return self._data[..., item]
+            # could be a slice, an intlist, a tuple
+            v = self._valid[item]
+            assert v.ndim == 1
+            if np.all(v):
+                return self._data[..., item]
+
+            # -- Quick and dirty, yes.
+            # -- Accurate, ?
+            try:
+                list(item)
+                is_int_list = True
+            except:
+                is_int_list = False
+
+            if np.sum(v) == 0:
+                # -- we need to re-compute everything in item
+                sub_item = item
+            elif is_int_list:
+                # -- in this case advanced indexing has been used
+                #    and only some of the elements need to be recomputed
+                assert self._valid.max() <= 1
+                item = np.asarray(item)
+                assert 'int' in str(item.dtype)
+                sub_item = item[v == 0]
+            elif isinstance(item, slice):
+                # -- in this case slice indexing has been used
+                #    and only some of the elements need to be recomputed
+                #    so we are converting the slice to an int_list
+                idxs_of_v = np.arange(len(self._valid))[item]
+                sub_item = idxs_of_v[v == 0]
+            else:
+                sub_item = item
+
+            self.rows_computed += v.sum()
+            sub_values = self.obj[sub_item]  # -- retrieve missing elements
+            self._valid[sub_item] = 1
+            try:
+                self._data[..., sub_item] = sub_values
+            except:
+                logger.error('data dtype %s' % str(self._data.dtype))
+                logger.error('data shape %s' % str(self._data.shape))
+
+                logger.error('sub_item str %s' % str(sub_item))
+                logger.error('sub_item type %s' % type(sub_item))
+                logger.error('sub_item len %s' % len(sub_item))
+                logger.error('sub_item shape %s' % getattr(sub_item, 'shape',
+                    None))
+
+                logger.error('sub_values str %s' % str(sub_values))
+                logger.error('sub_values type %s' % type(sub_values))
+                logger.error('sub_values len %s' % len(sub_values))
+                logger.error('sub_values shape %s' % getattr(sub_values, 'shape',
+                    None))
+                raise
+            assert np.all(self._valid[item])
+            return self._data[..., item]
+
+
+class cache_memory_T(CacheMixinT, larray):
+    """
+    Provide a lazily-filled cache of a larray (obj) via an in-memmory
+    array.
+    """
+
+    def __init__(self, obj):
+        """
+        If new files are created, then `msg` will be written to README.msg
+        """
+        self.obj = obj
+        shp = self.obj.shape
+        shp = shp[1:] + (shp[0], )
+        self._data = np.empty(shp, dtype=obj.dtype)
+        self._valid = np.zeros(len(obj), dtype='int8')
+        self.rows_computed = 0
+
+    def clone(self, given):
+        return self.__class__(obj=given_get(given, self.obj))
+
+
+class cache_memmap_T(CacheMixinT, larray):
+    """
+    Provide a lazily-filled cache of a larray (obj) via a memmap file
+    associated with (name).
+
+
+    The memmap will be stored in `basedir`/`name` which defaults to
+    `cache_memmap.ROOT`/`name`,
+    which defaults to '~/.skdata/memmaps'/`name`.
+    """
+
+    ROOT = os.path.join(get_data_home(), 'memmaps')
+
+
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False):
+        """
+        If new files are created, then `msg` will be written to README.msg
+        """
+
+        self.test = test
+        self.obj = obj
+        if basedir is None:
+            basedir = self.ROOT
+        self.dirname = dirname = os.path.join(basedir, name)
+        subprocess.call(['mkdir', '-p', dirname])
+
+        data_path = os.path.join(dirname, 'data.raw')
+        valid_path = os.path.join(dirname, 'valid.raw')
+        header_path = os.path.join(dirname, 'header.pkl')
+
+        shp = obj.shape
+        shp = shp[1:] + (shp[0], )
+
+        try:
+            dtype, shape = cPickle.load(open(header_path))
+            if obj is None or (dtype == obj.dtype and shape == obj.shape):
+                mode = 'r+'
+                logger.info('Re-using memmap %s with dtype %s, shape %s' % (
+                        data_path,
+                        str(dtype),
+                        str(shape)))
+                assert shp == shape, (shp, shape)
+                self._obj_shape = shape
+                self._obj_dtype = dtype
+                self._obj_ndim = len(shape)
+            else:
+                mode = 'w+'
+                logger.warn("Problem re-using memmap: dtype/shape mismatch")
+                logger.info('Creating memmap %s with dtype %s, shape %s' % (
+                        data_path,
+                        str(obj.dtype),
+                        str(shp)))
+                dtype = obj.dtype
+                shape = shp
+        except IOError:
+            dtype = obj.dtype
+            shape = shp
+            mode = 'w+'
+            logger.info('Creating memmap %s with dtype %s, shape %s' % (
+                    data_path,
+                    str(dtype),
+                    str(shp)))
+
+        self._data = np.memmap(data_path,
+            dtype=dtype,
+            mode=mode,
+            shape=shape)
+
+        self._valid = np.memmap(valid_path,
+            dtype='int8',
+            mode=mode,
+            shape=(shape[0],))
+
+        if mode == 'w+':
+            # initialize a new set of files
+            cPickle.dump((dtype, shape),
+                         open(header_path, 'w'))
+            # mark all memmap elements as uncomputed
+            self._valid[:] = 0
+
+            open(os.path.join(dirname, 'README.txt'), 'w').write(
+                memmap_README)
+            if msg is not None:
+                open(os.path.join(dirname, 'README.msg'), 'w').write(
+                    str(msg))
+            warning = ( 'WARNING_THIS_DIR_WILL_BE_DELETED'
+                        '_BY_cache_memmap.delete_files()')
+            open(os.path.join(dirname, warning), 'w').close()
+
+        self.rows_computed = 0
+
+        if del_atexit:
+            atexit.register(self.delete_files)
+
+
 
