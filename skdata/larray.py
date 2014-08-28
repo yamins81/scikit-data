@@ -400,6 +400,21 @@ has not been computed and the slice value is undefined. No other values
 should appear in the valid.raw array.
 """
 
+hdf5_README = """\
+Memmap files created by LazyCacheMemmap
+
+  data.raw - hdf5 array data file, no header
+  valid.raw - hdf5 array validity file, no header
+  header.pkl - python pickle of meta-data (dtype, shape) for data.raw
+
+The validitiy file is a byte array that indicates which elements of
+data.raw are valid.  If valid.raw byte `i` is 1, then the `i`'th tensor
+slice of data.raw has been computed and is usable. If it is 0, then it
+has not been computed and the slice value is undefined. No other values
+should appear in the valid.raw array.
+"""
+
+
 class CacheMixin(object):
     def populate(self, batchsize=1):
         """
@@ -636,136 +651,27 @@ class cache_memmap(CacheMixin, larray):
         # times, and the clones can themselves be cloned recursively.
 
 
-class CacheMixinT(CacheMixin):
+try:
+    import h5py
+except ImportError:
+    print("Can't import h5py")
 
-    @property
-    def shape(self):
-        try:
-            return self._obj_shape
-        except:
-            shp = self.obj.shape
-            shp = shp[1:] +  (shp[0], )
-            return shp
-
-    def __getitem__(self, item):
-        test = self.test
-        if isinstance(item, (int, np.integer)):
-            if self._valid[item] or (test is not None and item > test):
-                pass
-            else:
-                obj_item = self.obj[item]
-                self._data[..., item] = obj_item
-                self._valid[item] = 1
-                self.rows_computed += 1
-            return self._data[..., item]
-        else:
-            if test is not None:
-                if hasattr(item, '__getitem__'):
-                    item = item[:test]
-                else:
-                    return self._data[..., item]
-            # could be a slice, an intlist, a tuple
-            v = self._valid[item]
-            assert v.ndim == 1
-            if np.all(v):
-                return self._data[..., item]
-
-            # -- Quick and dirty, yes.
-            # -- Accurate, ?
-            try:
-                list(item)
-                is_int_list = True
-            except:
-                is_int_list = False
-
-            if np.sum(v) == 0:
-                # -- we need to re-compute everything in item
-                sub_item = item
-            elif is_int_list:
-                # -- in this case advanced indexing has been used
-                #    and only some of the elements need to be recomputed
-                assert self._valid.max() <= 1
-                item = np.asarray(item)
-                assert 'int' in str(item.dtype)
-                sub_item = item[v == 0]
-            elif isinstance(item, slice):
-                # -- in this case slice indexing has been used
-                #    and only some of the elements need to be recomputed
-                #    so we are converting the slice to an int_list
-                idxs_of_v = np.arange(len(self._valid))[item]
-                sub_item = idxs_of_v[v == 0]
-            else:
-                sub_item = item
-
-            self.rows_computed += v.sum()
-            sub_values = self.obj[sub_item]  # -- retrieve missing elements
-            _n = sub_values.ndim
-            if _n == 1:
-                sub_values = sub_values.reshape((1, ) + sub_values.shape)
-            _n = sub_values.ndim
-            for _i in range(_n-1):
-                sub_values = sub_values.swapaxes(_i, _i+1)
-
-            self._valid[sub_item] = 1
-
-            try:
-                self._data[..., sub_item] = sub_values
-            except:
-                logger.error('data dtype %s' % str(self._data.dtype))
-                logger.error('data shape %s' % str(self._data.shape))
-
-                logger.error('sub_item str %s' % str(sub_item))
-                logger.error('sub_item type %s' % type(sub_item))
-                logger.error('sub_item len %s' % len(sub_item))
-                logger.error('sub_item shape %s' % getattr(sub_item, 'shape',
-                    None))
-
-                logger.error('sub_values str %s' % str(sub_values))
-                logger.error('sub_values type %s' % type(sub_values))
-                logger.error('sub_values len %s' % len(sub_values))
-                logger.error('sub_values shape %s' % getattr(sub_values, 'shape',
-                    None))
-                raise
-            assert np.all(self._valid[item])
-            return self._data[..., item]
-
-
-class cache_memory_T(CacheMixinT, larray):
+class cache_hdf5(CacheMixin, larray):
     """
-    Provide a lazily-filled cache of a larray (obj) via an in-memmory
-    array.
-    """
-
-    def __init__(self, obj):
-        """
-        If new files are created, then `msg` will be written to README.msg
-        """
-        self.obj = obj
-        shp = self.obj.shape
-        shp = shp[1:] + (shp[0], )
-        self._data = np.empty(shp, dtype=obj.dtype)
-        self._valid = np.zeros(len(obj), dtype='int8')
-        self.rows_computed = 0
-
-    def clone(self, given):
-        return self.__class__(obj=given_get(given, self.obj))
-
-
-class cache_memmap_T(CacheMixinT, larray):
-    """
-    Provide a lazily-filled cache of a larray (obj) via a memmap file
+    Provide a lazily-filled cache of a larray (obj) via a hdf5 file
     associated with (name).
 
 
-    The memmap will be stored in `basedir`/`name` which defaults to
-    `cache_memmap.ROOT`/`name`,
-    which defaults to '~/.skdata/memmaps'/`name`.
+    The hdf5 file will be stored in `basedir`/`name` which defaults to
+    `cache_hdf5.ROOT`/`name`,
+    which defaults to '~/.skdata/hdf5s'/`name`.
     """
 
-    ROOT = os.path.join(get_data_home(), 'memmaps')
+    ROOT = os.path.join(get_data_home(), 'hdf5s')
 
 
-    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test=None):
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test = None):
+
         """
         If new files are created, then `msg` will be written to README.msg
         """
@@ -781,69 +687,71 @@ class cache_memmap_T(CacheMixinT, larray):
         valid_path = os.path.join(dirname, 'valid.raw')
         header_path = os.path.join(dirname, 'header.pkl')
 
-        shp = obj.shape
-        shp = shp[1:] + (shp[0], )
-
         try:
             dtype, shape = cPickle.load(open(header_path))
             if obj is None or (dtype == obj.dtype and shape == obj.shape):
                 mode = 'r+'
-                logger.info('Re-using memmap %s with dtype %s, shape %s' % (
+                logger.info('Re-using hdf5 %s with dtype %s, shape %s' % (
                         data_path,
                         str(dtype),
                         str(shape)))
-                assert shp == shape, (shp, shape)
                 self._obj_shape = shape
                 self._obj_dtype = dtype
                 self._obj_ndim = len(shape)
             else:
                 mode = 'w+'
-                logger.warn("Problem re-using memmap: dtype/shape mismatch")
-                logger.info('Creating memmap %s with dtype %s, shape %s' % (
+                logger.warn("Problem re-using hdf5: dtype/shape mismatch")
+                logger.info('Creating hdf5 %s with dtype %s, shape %s' % (
                         data_path,
                         str(obj.dtype),
-                        str(shp)))
+                        str(obj.shape)))
                 dtype = obj.dtype
-                shape = shp
+                shape = obj.shape
         except IOError:
             dtype = obj.dtype
-            shape = shp
+            shape = obj.shape
             mode = 'w+'
-            logger.info('Creating memmap %s with dtype %s, shape %s' % (
+            logger.info('Creating hdf5 %s with dtype %s, shape %s' % (
                     data_path,
                     str(dtype),
-                    str(shp)))
-
-        self._data = np.memmap(data_path,
-            dtype=dtype,
-            mode=mode,
-            shape=shape)
-
-        self._valid = np.memmap(valid_path,
-            dtype='int8',
-            mode=mode,
-            shape=(shape[-1],))
+                    str(obj.shape)))
+            
+        self._file = h5py.File(data_path, mode)        
 
         if mode == 'w+':
+            self._data = self._file.create_dataset("dataset", shape=shape, dtype=dtype)            
+            self._valid = self._file.create_dataset("valid", shape=(shape[0],), dtype="int8")
+                    
             # initialize a new set of files
             cPickle.dump((dtype, shape),
                          open(header_path, 'w'))
-            # mark all memmap elements as uncomputed
+            # mark all hdf5 elements as uncomputed
             self._valid[:] = 0
 
             open(os.path.join(dirname, 'README.txt'), 'w').write(
-                memmap_README)
+                hdf5_README)
             if msg is not None:
                 open(os.path.join(dirname, 'README.msg'), 'w').write(
                     str(msg))
             warning = ( 'WARNING_THIS_DIR_WILL_BE_DELETED'
-                        '_BY_cache_memmap.delete_files()')
+                        '_BY_cache_hdf5.delete_files()')
             open(os.path.join(dirname, warning), 'w').close()
+        elif mode == 'r+':
+            self._data = self._file.require_dataset("dataset", shape=shape, dtype=dtype)
+            self._valid = self._file.require_dataset("valid", shape=(shape[0],), dtype="int8")
 
         self.rows_computed = 0
 
         if del_atexit:
             atexit.register(self.delete_files)
 
+    def delete_files(self):
+        logger.info('deleting cache_hdf5 at %s' % self.dirname)
+        subprocess.call(['rm', '-Rf', self.dirname])
+
+    def clone(self, given):
+        raise NotImplementedError()
+        # XXX: careful to ensure that any instance can be cloned multiple
+        # times, and the clones can themselves be cloned recursively.
 
 
