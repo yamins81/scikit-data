@@ -508,6 +508,7 @@ class CacheMixin(object):
 
             self.rows_computed += v.sum()
             sub_values = self.obj[sub_item]  # -- retrieve missing elements
+            print('subitem', sub_item)
             self._valid[sub_item] = 1
             try:
                 self._data[sub_item] = sub_values
@@ -670,7 +671,7 @@ class cache_hdf5(CacheMixin, larray):
     ROOT = os.path.join(get_data_home(), 'hdf5s')
 
 
-    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test = None):
+    def __init__(self, obj, name, basedir=None, msg=None, del_atexit=False, test = None, mode=None):
 
         """
         If new files are created, then `msg` will be written to README.msg
@@ -690,7 +691,7 @@ class cache_hdf5(CacheMixin, larray):
         try:
             dtype, shape = cPickle.load(open(header_path))
             if obj is None or (dtype == obj.dtype and shape == obj.shape):
-                mode = 'r+'
+                _mode = 'r+'
                 logger.info('Re-using hdf5 %s with dtype %s, shape %s' % (
                         data_path,
                         str(dtype),
@@ -699,7 +700,7 @@ class cache_hdf5(CacheMixin, larray):
                 self._obj_dtype = dtype
                 self._obj_ndim = len(shape)
             else:
-                mode = 'w+'
+                _mode = 'w'
                 logger.warn("Problem re-using hdf5: dtype/shape mismatch")
                 logger.info('Creating hdf5 %s with dtype %s, shape %s' % (
                         data_path,
@@ -710,17 +711,20 @@ class cache_hdf5(CacheMixin, larray):
         except IOError:
             dtype = obj.dtype
             shape = obj.shape
-            mode = 'w+'
+            _mode = 'w'
             logger.info('Creating hdf5 %s with dtype %s, shape %s' % (
                     data_path,
                     str(dtype),
                     str(obj.shape)))
             
+        if mode is None:
+            mode = _mode
+
         self._file = h5py.File(data_path, mode)        
 
-        if mode == 'w+':
-            self._data = self._file.create_dataset("dataset", shape=shape, dtype=dtype)            
-            self._valid = self._file.create_dataset("valid", shape=(shape[0],), dtype="int8")
+        if mode in ['w', 'a']:
+            self._data = self._file.create_dataset("data", shape=shape, dtype=dtype)            
+            self._valid = self._file.create_dataset("valid", shape=(shape[0],), dtype="bool")
                     
             # initialize a new set of files
             cPickle.dump((dtype, shape),
@@ -736,9 +740,9 @@ class cache_hdf5(CacheMixin, larray):
             warning = ( 'WARNING_THIS_DIR_WILL_BE_DELETED'
                         '_BY_cache_hdf5.delete_files()')
             open(os.path.join(dirname, warning), 'w').close()
-        elif mode == 'r+':
-            self._data = self._file.require_dataset("dataset", shape=shape, dtype=dtype)
-            self._valid = self._file.require_dataset("valid", shape=(shape[0],), dtype="int8")
+        elif mode in ['r', 'r+', 'a']:
+            self._data = self._file.require_dataset("data", shape=shape, dtype=dtype)
+            self._valid = self._file.require_dataset("valid", shape=(shape[0],), dtype="bool")
 
         self.rows_computed = 0
 
