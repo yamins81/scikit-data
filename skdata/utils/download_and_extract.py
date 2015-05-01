@@ -79,6 +79,7 @@ def download_boto(url, credentials, output_filename, sha1=None):
     file = url.path.strip('/')
     bucket = conn.get_bucket(bucketname)
     key = bucket.get_key(file)
+    print('getting %s' % file)
     key.get_contents_to_filename(output_filename)
 
     if sha1 is not None:

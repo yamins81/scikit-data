@@ -722,13 +722,13 @@ class cache_hdf5(CacheMixin, larray):
 
         self._file = h5py.File(data_path, mode)        
 
-        if mode in ['w', 'a']:
-            self._data = self._file.create_dataset("data", shape=shape, dtype=dtype)            
+        if mode in ['w']:
+            self._data = self._file.create_dataset("data", shape=shape, dtype=dtype)
             self._valid = self._file.create_dataset("valid", shape=(shape[0],), dtype="bool")
-                    
-            # initialize a new set of files
-            cPickle.dump((dtype, shape),
-                         open(header_path, 'w'))
+                                
+            # initialize a new set of files 
+            with open(header_path, 'wb') as _f:
+                cPickle.dump((dtype, shape), _f)
             # mark all hdf5 elements as uncomputed
             self._valid[:] = 0
 
